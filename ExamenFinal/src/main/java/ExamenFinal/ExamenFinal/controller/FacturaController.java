@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class FacturaController {
 
-    private FacturaService invoiceService;
+    private final FacturaService invoiceService;
 
     @PostMapping("/{tiendaId}")
     public ResponseEntity<String> createInvoice(@PathVariable String tiendaId, @RequestBody FacturaDto facturaRequest) {

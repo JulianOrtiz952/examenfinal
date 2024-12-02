@@ -9,17 +9,14 @@ import lombok.Data;
 public class Pago {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer id;
+    private Long id;
 
     @OneToOne
     @JoinColumn(name = "compra_id")
     private Compra compra;
 
-    @ManyToOne
-    @JoinColumn(name = "tipo_pago_id")
-    private TipoPago tipoPago;
-
-    private String tarjetaTipo;
-    private Integer cuotas;
     private Double valor;
+
+    @Column(length = 1000)
+    private String observaciones;
 }
