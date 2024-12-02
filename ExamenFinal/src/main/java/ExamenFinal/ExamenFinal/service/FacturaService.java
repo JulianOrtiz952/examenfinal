@@ -6,11 +6,14 @@ import ExamenFinal.ExamenFinal.dto.MedioPagoDto;
 import ExamenFinal.ExamenFinal.dto.ProductoDto;
 import ExamenFinal.ExamenFinal.entity.*;
 import ExamenFinal.ExamenFinal.repository.*;
+import ExamenFinal.ExamenFinal.response.FacturaData;
+import ExamenFinal.ExamenFinal.response.FacturaResponse;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,36 +44,42 @@ public class FacturaService {
 
 
     @Transactional
-    public void processInvoice(String tiendaId, FacturaDto facturaDto) {
-        Tienda tienda = tiendaRepository.findByUuid(tiendaId)
-                .orElseThrow(() -> new RuntimeException("Tienda no encontrada con UUID: " + tiendaId));
+    public FacturaResponse processInvoice(String tiendaId, FacturaDto facturaDto) {
+        try {
+            Tienda tienda = tiendaRepository.findByUuid(tiendaId)
+                    .orElseThrow(() -> new RuntimeException("Tienda no encontrada con UUID: " + tiendaId));
 
-        Cliente cliente = processCliente(facturaDto.getCliente());
-        Vendedor vendedor = vendedorRepository.findByDocumento(facturaDto.getVendedor().getDocumento())
-                .orElseThrow(() -> new RuntimeException("Vendedor no encontrado con documento: " + facturaDto.getVendedor().getDocumento()));
-        Cajero cajero = cajeroRepository.findByToken(facturaDto.getCajero().getToken())
-                .orElseThrow(() -> new RuntimeException("Cajero no encontrado con token: " + facturaDto.getCajero().getToken()));
+            Cliente cliente = processCliente(facturaDto.getCliente());
+            Vendedor vendedor = vendedorRepository.findByDocumento(facturaDto.getVendedor().getDocumento())
+                    .orElseThrow(() -> new RuntimeException("Vendedor no encontrado con documento: " + facturaDto.getVendedor().getDocumento()));
+            Cajero cajero = cajeroRepository.findByToken(facturaDto.getCajero().getToken())
+                    .orElseThrow(() -> new RuntimeException("Cajero no encontrado con token: " + facturaDto.getCajero().getToken()));
 
-        Compra compra = new Compra();
-        compra.setCliente(cliente);
-        compra.setTienda(tienda);
-        compra.setVendedor(vendedor);
-        compra.setCajero(cajero);
-        compra.setFecha(LocalDateTime.now());
-        compra.setImpuestos(facturaDto.getImpuesto());
+            Compra compra = new Compra();
+            compra.setCliente(cliente);
+            compra.setTienda(tienda);
+            compra.setVendedor(vendedor);
+            compra.setCajero(cajero);
+            compra.setFecha(LocalDateTime.now());
+            compra.setImpuestos(facturaDto.getImpuesto());
 
-        List<DetallesCompra> detallesCompraList = processProductos(facturaDto.getProductos(), compra);
-        compra.setDetallesCompra(detallesCompraList);
+            List<DetallesCompra> detallesCompraList = processProductos(facturaDto.getProductos(), compra);
+            compra.setDetallesCompra(detallesCompraList);
 
-        double subtotal = detallesCompraList.stream()
-                .mapToDouble(dc -> dc.getPrecio() * dc.getCantidad() * (1 - dc.getDescuento() / 100.0))
-                .sum();
-        double total = subtotal + facturaDto.getImpuesto();
-        compra.setTotal(total);
+            double subtotal = detallesCompraList.stream()
+                    .mapToDouble(dc -> dc.getPrecio() * dc.getCantidad() * (1 - dc.getDescuento() / 100.0))
+                    .sum();
+            double total = subtotal + facturaDto.getImpuesto();
+            compra.setTotal(total);
 
-        compra = compraRepository.save(compra);
+            compra = compraRepository.save(compra);
 
-        processPagos(facturaDto.getMedios_pago(), compra);
+            processPagos(facturaDto.getMedios_pago(), compra);
+
+            return createSuccessResponse(compra);
+        } catch (Exception e) {
+            return createErrorResponse(e.getMessage());
+        }
     }
 
     private Cliente processCliente(ClienteDto clienteDto) {
@@ -85,17 +94,15 @@ public class FacturaService {
             cliente = new Cliente();
             cliente.setDocumento(clienteDto.getDocumento());
             cliente.setTipoDocumento(tipoDocumento);
+            cliente.setNombre(clienteDto.getNombre());
         } else if (clientes.size() == 1) {
             // Use the existing client if only one is found
             cliente = clientes.get(0);
+            cliente.setNombre(clienteDto.getNombre()); // Update name if changed
         } else {
-            // If multiple clients are found, use the first one and log a warning
-            cliente = clientes.get(0);
-            System.out.println("WARNING: Multiple clients found with documento " + clienteDto.getDocumento() + " and tipo_documento " + clienteDto.getTipo_documento() + ". Using the first one.");
+            throw new RuntimeException("Se encontraron múltiples clientes con el mismo documento y tipo de documento");
         }
 
-        // Update the client's name
-        cliente.setNombre(clienteDto.getNombre());
         return clienteRepository.save(cliente);
     }
 
@@ -137,11 +144,32 @@ public class FacturaService {
 
         pagoRepository.save(pago);
 
-        // Verificar si el total pagado coincide con el total de la compra
         if (Math.abs(totalPagado - compra.getTotal()) > 0.01) {
             throw new RuntimeException("El total pagado (" + String.format("%.2f", totalPagado) +
                     ") no coincide con el total de la compra (" +
                     String.format("%.2f", compra.getTotal()) + ")");
         }
+    }
+
+    private FacturaResponse createSuccessResponse(Compra compra) {
+        FacturaResponse response = new FacturaResponse();
+        response.setStatus("success");
+        response.setMessage("La factura se ha creado correctamente con el número: " + compra.getId());
+
+        FacturaData data = new FacturaData();
+        data.setNumero(compra.getId().toString());
+        data.setTotal(String.format("%.2f", compra.getTotal()));
+        data.setFecha(compra.getFecha().format(DateTimeFormatter.ISO_DATE));
+
+        response.setData(data);
+        return response;
+    }
+
+    private FacturaResponse createErrorResponse(String errorMessage) {
+        FacturaResponse response = new FacturaResponse();
+        response.setStatus("error");
+        response.setMessage(errorMessage);
+        response.setData(null);
+        return response;
     }
 }
